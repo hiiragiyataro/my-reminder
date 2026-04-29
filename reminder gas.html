@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Deadline Survival Cloud</title>
+    <style>
+        /* CSSは前回と同じなので、読みやすさのため一部省略・維持しています */
+        :root { --priority-urgent: #ffecec; --priority-important: #fff8e6; --priority-default: #ffffff; --bar-safe: #2ecc71; --bar-warning: #f39c12; --bar-urgent: #e74c3c; }
+        body { font-family: sans-serif; background: #f0f2f5; padding: 20px; color: #333; }
+        .container { max-width: 650px; margin: 0 auto; }
+        .input-area { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); margin-bottom: 20px; }
+        .input-row { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+        input, select, button { padding: 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 0.9rem; }
+        button#add-btn { width: 100%; background: #2c3e50; color: white; border: none; cursor: pointer; font-weight: bold; }
+        .accordion-btn { width: 100%; padding: 10px; background: #dfe4ea; border: none; border-radius: 8px; cursor: pointer; font-size: 0.85rem; }
+        #completedSection { display: none; margin-top: 10px; }
+        .task-card { display: flex; align-items: center; padding: 15px; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); margin-bottom: 12px; transition: 0.3s; }
+        .p-1 { background: var(--priority-urgent); border-left: 6px solid #e74c3c; }
+        .p-2 { background: var(--priority-important); border-left: 6px solid #f1c40f; }
+        .p-3 { background: var(--priority-default); border-left: 6px solid #bdc3c7; }
+        .check-col { margin-right: 15px; width: 22px; height: 22px; cursor: pointer; }
+        .content-col { flex-grow: 1; overflow: hidden; }
+        .card-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+        .task-title { font-weight: bold; }
+        .hp-container { width: 100%; height: 12px; background: #eee; border-radius: 6px; overflow: hidden; position: relative; border: 1px solid #ddd; }
+        .hp-bar { height: 100%; transition: width 0.6s ease; }
+        .delete-btn { color: #e74c3c; font-size: 0.75rem; cursor: pointer; border: none; background: none; text-decoration: underline; }
+        #loading { text-align: center; color: #666; display: none; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div id="loading">同期中...</div>
+    <div class="input-area">
+        <div class="input-row"><input type="text" id="taskInput" placeholder="何をすべきか？"></div>
+        <div class="input-row">
+            <input type="date" id="dateInput">
+            <select id="timeSlotInput"><option value="AM">AM</option><option value="PM" selected>PM</option></select>
+            <select id="priorityInput"><option value="1">大至急</option><option value="2">重要</option><option value="3" selected>デフォルト</option></select>
+        </div>
+        <button id="add-btn" onclick="addTask()">同期して追加</button>
+    </div>
+
+    <div class="accordion">
+        <button class="accordion-btn" onclick="toggleAccordion()">▼ 完了済みタスクを表示/非表示</button>
+        <div id="completedSection"><div id="completedTasks" class="task-list"></div></div>
+    </div>
+
+    <h2>進行中のミッション</h2>
+    <div id="activeTasks" class="task-list"></div>
+</div>
+
+<script>
+    // https://script.google.com/macros/s/AKfycby39i9hZTpU3dnb2WIXJms76VHUEsJ39SmEZ1KNYHspAic3pOrdSoYFA13N6iEswHuTMQ/exec
+    const GAS_URL = "ここにURLをペースト"; 
+
+    let tasks = [];
+
+    // 起動時にGASからデータを取得
+    async function loadTasks() {
+        document.getElementById('loading').style.display = 'block';
+        try {
+            const response = await fetch(GAS_URL);
+            tasks = await response.json();
+            render();
+        } catch (e) {
+            console.error("データ取得失敗。ローカルデータを使用します。", e);
+            tasks = JSON.parse(localStorage.getItem('myTasks_final')) || [];
+            render();
+        }
+        document.getElementById('loading').style.display = 'none';
+    }
+
+    // GASへデータを保存
+    async function syncToCloud() {
+        document.getElementById('loading').style.display = 'block';
+        try {
+            await fetch(GAS_URL, {
+                method: 'POST',
+                body: JSON.stringify({ method: 'save', data: tasks })
+            });
+        } catch (e) {
+            console.error("同期失敗", e);
+        }
+        document.getElementById('loading').style.display = 'none';
+    }
+
+    async function addTask() {
+        const title = document.getElementById('taskInput').value;
+        const dateVal = document.getElementById('dateInput').value;
+        if (!title || !dateVal) return alert("入力してください");
+
+        const deadlineDate = new Date(dateVal);
+        deadlineDate.setHours(document.getElementById('timeSlotInput').value === "AM" ? 12 : 23, 59);
+
+        const task = {
+            id: Date.now(), title, deadline: deadlineDate.getTime(),
+            timeSlot: document.getElementById('timeSlotInput').value,
+            priority: parseInt(document.getElementById('priorityInput').value),
+            completed: false
+        };
+
+        tasks.push(task);
+        saveAndRender();
+        document.getElementById('taskInput').value = '';
+    }
+
+    function toggleComplete(id) {
+        const task = tasks.find(t => t.id === id);
+        if (task) task.completed = !task.completed;
+        saveAndRender();
+    }
+
+    function deleteTask(id) {
+        if(!confirm("削除しますか？")) return;
+        tasks = tasks.filter(t => t.id !== id);
+        saveAndRender();
+    }
+
+    async function saveAndRender() {
+        tasks.sort((a, b) => a.priority - b.priority || a.deadline - b.deadline);
+        localStorage.setItem('myTasks_final', JSON.stringify(tasks));
+        render();
+        await syncToCloud(); // クラウドに保存
+    }
+
+    function toggleAccordion() {
+        const sec = document.getElementById('completedSection');
+        sec.style.display = (sec.style.display === 'block') ? 'none' : 'block';
+    }
+
+    function render() {
+        const activeList = document.getElementById('activeTasks');
+        const completedList = document.getElementById('completedTasks');
+        activeList.innerHTML = ''; completedList.innerHTML = '';
+        const now = new Date();
+        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+
+        tasks.forEach(task => {
+            const d = new Date(task.deadline);
+            const dStart = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+            const diffDays = Math.ceil((dStart - todayStart) / (1000 * 60 * 60 * 24));
+            let percent = 0; let barColor = "var(--bar-safe)";
+
+            if (diffDays >= 4) percent = Math.min(100, 75 + (diffDays * 2));
+            else if (diffDays === 3) { percent = 50; barColor = "var(--bar-warning)"; }
+            else if (diffDays === 2) { percent = 30; barColor = "var(--bar-warning)"; }
+            else if (diffDays === 1) { percent = 15; barColor = "var(--bar-urgent)"; }
+            else if (diffDays === 0) { percent = 5; barColor = "var(--bar-urgent)"; }
+            else { percent = 0; barColor = "#000"; }
+
+            const cardHtml = `
+                <div class="task-card p-${task.priority}">
+                    <input type="checkbox" class="check-col" ${task.completed ? 'checked' : ''} onchange="toggleComplete(${task.id})">
+                    <div class="content-col">
+                        <div class="card-top">
+                            <span class="task-title">${task.title}</span>
+                            <span style="font-size:0.8rem; color:#777;">${diffDays < 0 ? "OVER" : "あと"+diffDays+"日"} [${d.getMonth()+1}/${d.getDate()}]</span>
+                        </div>
+                        ${!task.completed ? `<div class="hp-container"><div class="hp-bar" style="width: ${percent}%; background-color: ${barColor};"></div></div>` : `<button class="delete-btn" onclick="deleteTask(${task.id})">完全に消去</button>`}
+                    </div>
+                </div>`;
+            if (task.completed) completedList.innerHTML += cardHtml;
+            else activeList.innerHTML += cardHtml;
+        });
+    }
+
+    loadTasks(); // 初回読み込み
+</script>
+
+</body>
+</html>
